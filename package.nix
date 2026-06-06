@@ -87,16 +87,28 @@ writeShellApplication {
         find_dev GLV80RHBOOT >/dev/null 2>&1
     }
 
+    # Is the left half connected (normal or bootloader mode)?
+    is_left_plugged_in() {
+      grep -rqs "Glove80 LH" /sys/bus/usb/devices/*/product 2>/dev/null ||
+        find_dev GLV80LHBOOT >/dev/null 2>&1
+    }
+
+    # Is the right half connected (normal or bootloader mode)?
+    is_right_plugged_in() {
+      grep -rqs "Glove80 RH" /sys/bus/usb/devices/*/product 2>/dev/null ||
+        find_dev GLV80RHBOOT >/dev/null 2>&1
+    }
+
     # $1 = label, $2 = side label, $3 = firmware path.
     # Returns 0 once that half has been flashed.
     flash_half() {
       local label="$1" side="$2" fw="$3" dev mnt out
       dev=$(find_dev "$label") || return 1
 
-      info "  [$side] detected at $dev"
+      info "  [$side] Detected at $dev"
       mnt=$(lsblk -no MOUNTPOINT "$dev" 2>/dev/null | head -n1 || true)
       if [ -z "$mnt" ]; then
-        info "  [$side] mounting…"
+        info "  [$side] Mounting…"
         if ! out=$(udisksctl mount -b "$dev" 2>/dev/null); then
           warn "  [$side] could not mount — retrying"
           return 1
@@ -109,14 +121,45 @@ writeShellApplication {
         return 1
       fi
 
-      info "  [$side] writing firmware…"
+      info "  [$side] Writing firmware…"
       if ! cp "$fw" "$mnt/"; then
         warn "  [$side] write error — retrying"
         return 1
       fi
       sync
-      ok "  [$side] flashed — rebooting."
+      ok "  [$side] SUCCESS — flashed, rebooting."
       return 0
+    }
+
+    # Flash one half sequentially, showing side-specific bootloader instructions.
+    # $1 = boot label, $2 = side (LEFT|RIGHT), $3 = display name,
+    # $4 = combo text, $5 = firmware path.
+    flash_side() {
+      local label="$1" side="$2" display="$3" combo="$4" fw="$5"
+
+      if ! find_dev "$label" >/dev/null 2>&1; then
+        if [ "$side" = "LEFT" ]; then
+          if ! is_left_plugged_in; then
+            step "Plug in the $display half via USB."
+            while ! is_left_plugged_in; do sleep 0.5; done
+          fi
+        else
+          if ! is_right_plugged_in; then
+            step "Plug in the $display half via USB."
+            while ! is_right_plugged_in; do sleep 0.5; done
+          fi
+        fi
+        ok "  $display keyboard detected."
+        info ""
+        info "Hold ''${bold}$combo''${rst} to enter bootloader."
+        info ""
+        while ! find_dev "$label" >/dev/null 2>&1; do sleep 0.5; done
+      else
+        ok "  $display keyboard detected."
+        info ""
+      fi
+
+      while ! flash_half "$label" "$side" "$fw"; do sleep 0.5; done
     }
 
     # ------------------------------------------------------------- commands --
@@ -124,55 +167,23 @@ writeShellApplication {
       local fw
       fw=$(resolve_firmware "''${1:-}") || return 1
 
-      info "''${bold}Glove80 firmware flash''${rst}"
+      info "''${bold}Glove80 Firmware Flash''${rst}"
       info "''${dim}firmware: $fw''${rst}"
       info ""
 
       if ! is_plugged_in; then
         step "Plug in one or both halves via USB."
         while ! is_plugged_in; do sleep 0.5; done
-        ok "Keyboard detected."
         info ""
       fi
 
-      local lh=0 rh=0 prompted=0
-      find_dev GLV80LHBOOT >/dev/null 2>&1 && lh=2
-      find_dev GLV80RHBOOT >/dev/null 2>&1 && rh=2
-
-      if [ "$lh" = 2 ] && [ "$rh" = 2 ]; then
-        step "Both halves in bootloader. Flashing…"
-      elif [ "$lh" = 2 ]; then
-        step "LEFT half in bootloader."
-        info "On the RIGHT half: hold ''${bold}Magic''${rst} (bottom-left thumb) + tap top-left key (Esc)."
-      elif [ "$rh" = 2 ]; then
-        step "RIGHT half in bootloader."
-        info "On the LEFT half: hold ''${bold}Magic''${rst} (bottom-left thumb) + tap top-left key (Esc)."
-      else
-        step "On the plugged-in half: hold ''${bold}Magic''${rst} (bottom-left thumb) + tap"
-        info "top-left key (Esc) to enter bootloader. ''${dim}Ctrl-C to abort.''${rst}"
-      fi
+      flash_side GLV80LHBOOT LEFT "Left" \
+        "Magic key (bottom-left) + the E key" "$fw"
+      info ""
+      flash_side GLV80RHBOOT RIGHT "Right" \
+        "PgDn key (bottom-right) + the I key" "$fw"
       info ""
 
-      lh=0
-      rh=0
-      while [ "$lh" = 0 ] || [ "$rh" = 0 ]; do
-        if [ "$lh" = 0 ] && flash_half GLV80LHBOOT LEFT "$fw"; then lh=1; fi
-        if [ "$rh" = 0 ] && flash_half GLV80RHBOOT RIGHT "$fw"; then rh=1; fi
-
-        if [ "$lh" = 1 ] && [ "$rh" = 0 ] && [ "$prompted" != "r" ]; then
-          info ""
-          step "Now on the RIGHT half: hold Magic + tap top-left key (Esc)."
-          prompted=r
-        elif [ "$rh" = 1 ] && [ "$lh" = 0 ] && [ "$prompted" != "l" ]; then
-          info ""
-          step "Now on the LEFT half: hold Magic + tap top-left key (Esc)."
-          prompted=l
-        fi
-
-        if [ "$lh" = 0 ] || [ "$rh" = 0 ]; then sleep 0.5; fi
-      done
-
-      info ""
       ok "Done. Both halves flashed."
     }
 
@@ -200,11 +211,14 @@ writeShellApplication {
       3. built-in default           baked in at build time
 
     ''${bold}Flashing''${rst}:
-      Run ''${bold}glove80 flash''${rst}, then for each half plug it in via USB and hold
-      Magic (bottom-left thumb) + tap the top-left key (where Esc normally is)
-      to enter the bootloader. Each half is detected, mounted, flashed, and
-      reboots itself. One cable is fine — do the halves one at a time; with two
-      cables, flash in either order. Ctrl-C to abort.
+      Run ''${bold}glove80 flash''${rst}, plug in each half via USB, then put it into
+      bootloader using the key combo for that half:
+
+        LEFT  half: hold ''${bold}Magic key (bottom-left)''${rst} + the ''${bold}E key''${rst}
+        RIGHT half: hold ''${bold}PgDn key (bottom-right)''${rst} + the ''${bold}I key''${rst}
+
+      Each half is detected, mounted, flashed, and reboots itself.
+      One cable is fine — do the halves one at a time. Ctrl-C to abort.
     EOF
     }
 
