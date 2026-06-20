@@ -43,7 +43,6 @@ writeShellApplication {
     else
       bold=""; dim=""; red=""; grn=""; ylw=""; cyn=""; rst=""
     fi
-    apos="'"
 
     info()  { printf '%s\n' "$*"; }
     step()  { printf '%s» %s%s\n' "$cyn" "$*" "$rst"; }
@@ -79,13 +78,6 @@ writeShellApplication {
         [ "$label" = "$want" ] && { printf '%s' "$path"; return 0; }
       done < <(lsblk -o PATH,LABEL -nr)
       return 1
-    }
-
-    # Is any Glove80 half connected (normal or bootloader mode)?
-    is_plugged_in() {
-      grep -rqs "Glove80" /sys/bus/usb/devices/*/product 2>/dev/null ||
-        find_dev GLV80LHBOOT >/dev/null 2>&1 ||
-        find_dev GLV80RHBOOT >/dev/null 2>&1
     }
 
     # $1 = label, $2 = side label, $3 = firmware path.
@@ -125,15 +117,13 @@ writeShellApplication {
       local fw
       fw=$(resolve_firmware "''${1:-}") || return 1
 
+      info "''${bold}Glove80 firmware flash''${rst}"
       info "''${dim}firmware: $fw''${rst}"
       info ""
-
-      if ! is_plugged_in; then
-        step "Plug in one or both halves via USB."
-        while ! is_plugged_in; do sleep 0.5; done
-        ok "Keyboard detected."
-        info ""
-      fi
+      info "''${ylw}Before you begin:''${rst}"
+      info "  Have a spare keyboard or on-screen keyboard available."
+      info "  Use a direct USB-C cable — avoid USB hubs."
+      info ""
 
       local lh=0 rh=0 prompted=0
       find_dev GLV80LHBOOT >/dev/null 2>&1 && lh=2
@@ -144,22 +134,22 @@ writeShellApplication {
       elif [ "$lh" = 2 ]; then
         step "LEFT half in bootloader — flashing it now."
         info "  Put the RIGHT half into bootloader when ready:"
-        info "    ''${bold}Power-up (recommended):''${rst} power off → hold ''${bold}I + PgDn''${rst} → power on"
-        info "    ''${bold}ZMK shortcut (quicker):''${rst}  ''${bold}Magic + ''${apos}''${rst}"
-        info "  Slow-pulsing red LED = bootloader ready."
+        info "    Switch off → hold ''${bold}I + PgDn''${rst} → switch on"
+        info "  ''${dim}Confirm: LED by power switch slow-pulses red.''${rst}"
+        prompted=r
       elif [ "$rh" = 2 ]; then
         step "RIGHT half in bootloader — flashing it now."
         info "  Put the LEFT half into bootloader when ready:"
-        info "    ''${bold}Power-up (recommended):''${rst} power off → hold ''${bold}Magic + E''${rst} → power on"
-        info "    ''${bold}ZMK shortcut (quicker):''${rst}  ''${bold}Magic + Esc''${rst}"
-        info "  Slow-pulsing red LED = bootloader ready."
+        info "    Switch off → hold ''${bold}Magic + E''${rst} → switch on"
+        info "  ''${dim}Confirm: LED by power switch slow-pulses red.''${rst}"
+        prompted=l
       else
-        step "Put the plugged-in half into bootloader mode."
-        info "    ''${bold}Power-up (recommended)''${rst} — power off, then hold while powering on:"
-        info "      Left:  ''${bold}Magic + E''${rst}    Right: ''${bold}I + PgDn''${rst}"
-        info "    ''${bold}ZMK shortcut (quicker)''${rst}:"
-        info "      Left:  ''${bold}Magic + Esc''${rst}  Right: ''${bold}Magic + ''${apos}''${rst}"
-        info "  Slow-pulsing red LED = bootloader ready.  ''${dim}Ctrl-C to abort.''${rst}"
+        step "Plug in one or both halves and enter bootloader mode:"
+        info ""
+        info "  Right: switch off → connect USB → hold ''${bold}I + PgDn''${rst} → switch on"
+        info "  Left:  switch off → connect USB → hold ''${bold}Magic + E''${rst} → switch on"
+        info ""
+        info "  ''${dim}Confirm: LED by power switch slow-pulses red.  Ctrl-C to abort.''${rst}"
       fi
       info ""
 
@@ -172,16 +162,14 @@ writeShellApplication {
         if [ "$lh" = 1 ] && [ "$rh" = 0 ] && [ "$prompted" != "r" ]; then
           info ""
           step "LEFT flashed. Plug in the RIGHT half (or swap cable) and enter bootloader:"
-          info "    ''${bold}Power-up (recommended):''${rst} power off → hold ''${bold}I + PgDn''${rst} → power on"
-          info "    ''${bold}ZMK shortcut (quicker):''${rst}  ''${bold}Magic + ''${apos}''${rst}"
-          info "  Slow-pulsing red LED = bootloader ready."
+          info "  Switch off → connect USB → hold ''${bold}I + PgDn''${rst} → switch on"
+          info "  ''${dim}Confirm: LED by power switch slow-pulses red.''${rst}"
           prompted=r
         elif [ "$rh" = 1 ] && [ "$lh" = 0 ] && [ "$prompted" != "l" ]; then
           info ""
           step "RIGHT flashed. Plug in the LEFT half (or swap cable) and enter bootloader:"
-          info "    ''${bold}Power-up (recommended):''${rst} power off → hold ''${bold}Magic + E''${rst} → power on"
-          info "    ''${bold}ZMK shortcut (quicker):''${rst}  ''${bold}Magic + Esc''${rst}"
-          info "  Slow-pulsing red LED = bootloader ready."
+          info "  Switch off → connect USB → hold ''${bold}Magic + E''${rst} → switch on"
+          info "  ''${dim}Confirm: LED by power switch slow-pulses red.''${rst}"
           prompted=l
         fi
 
@@ -216,16 +204,11 @@ writeShellApplication {
       3. built-in default           baked in at build time
 
     ''${bold}Flashing''${rst}:
-      Run ''${bold}glove80 flash''${rst}, then plug in each half via USB and enter bootloader
-      mode (look for a slow-pulsing red LED next to the power switch):
-
-        Power-up method (recommended — power off, hold keys, then power on):
-          Left:  Magic + E      Right: I + PgDn
-        ZMK method (quicker, less reliable):
-          Left:  Magic + Esc    Right: Magic + ''${apos}
-
-      Each half is detected, mounted, flashed, and reboots. One cable is fine;
-      do halves one at a time, or both at once with two cables. Ctrl-C to abort.
+      Run ''${bold}glove80 flash''${rst} and follow the prompts. For each half, enter bootloader
+      mode: switch off → connect USB → hold keys while powering on.
+        Right half: hold I + PgDn
+        Left half:  hold Magic + E
+      LED slow-pulses red when ready. One cable is fine. Ctrl-C to abort.
     EOF
     }
 
