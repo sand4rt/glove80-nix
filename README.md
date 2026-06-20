@@ -13,8 +13,8 @@ sensible defaults. The full set of options (shown with their defaults) is:
 
 ```nix
 {
-  inputs.glove80.url = "github:sand4rt/glove80-nix";
-  # inputs.glove80.inputs.nixpkgs.follows = "nixpkgs"; # optional
+  inputs.glove80-nix.url = "github:sand4rt/glove80-nix";
+  # inputs.glove80-nix.inputs.nixpkgs.follows = "nixpkgs"; # optional
 
   # In your Home Manager configuration:
   imports = [ inputs.glove80-nix.homeManagerModules.default ];
