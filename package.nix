@@ -43,6 +43,7 @@ writeShellApplication {
     else
       bold=""; dim=""; red=""; grn=""; ylw=""; cyn=""; rst=""
     fi
+    apos="'"
 
     info()  { printf '%s\n' "$*"; }
     step()  { printf '%s» %s%s\n' "$cyn" "$*" "$rst"; }
@@ -57,10 +58,10 @@ writeShellApplication {
 
       if [ -z "$fw" ]; then
         err "No firmware specified."
-        info ""
-        info "Pass one explicitly:"
-        info "    ''${bold}glove80 flash ./glove80.uf2''${rst}"
-        info "or set ''${bold}\$GLOVE80_FIRMWARE''${rst}, or build with a default firmware."
+        info "" >&2
+        info "Pass one explicitly:" >&2
+        info "    ''${bold}glove80 flash ./glove80.uf2''${rst}" >&2
+        info "or set ''${bold}\$GLOVE80_FIRMWARE''${rst}, or build with a default firmware." >&2
         return 1
       fi
       if [ ! -f "$fw" ]; then
@@ -87,28 +88,16 @@ writeShellApplication {
         find_dev GLV80RHBOOT >/dev/null 2>&1
     }
 
-    # Is the left half connected (normal or bootloader mode)?
-    is_left_plugged_in() {
-      grep -rqs "Glove80 LH" /sys/bus/usb/devices/*/product 2>/dev/null ||
-        find_dev GLV80LHBOOT >/dev/null 2>&1
-    }
-
-    # Is the right half connected (normal or bootloader mode)?
-    is_right_plugged_in() {
-      grep -rqs "Glove80 RH" /sys/bus/usb/devices/*/product 2>/dev/null ||
-        find_dev GLV80RHBOOT >/dev/null 2>&1
-    }
-
     # $1 = label, $2 = side label, $3 = firmware path.
     # Returns 0 once that half has been flashed.
     flash_half() {
       local label="$1" side="$2" fw="$3" dev mnt out
       dev=$(find_dev "$label") || return 1
 
-      info "  [$side] Detected at $dev"
+      info "  [$side] detected at $dev"
       mnt=$(lsblk -no MOUNTPOINT "$dev" 2>/dev/null | head -n1 || true)
       if [ -z "$mnt" ]; then
-        info "  [$side] Mounting…"
+        info "  [$side] mounting…"
         if ! out=$(udisksctl mount -b "$dev" 2>/dev/null); then
           warn "  [$side] could not mount — retrying"
           return 1
@@ -121,45 +110,14 @@ writeShellApplication {
         return 1
       fi
 
-      info "  [$side] Writing firmware…"
+      info "  [$side] writing firmware…"
       if ! cp "$fw" "$mnt/"; then
         warn "  [$side] write error — retrying"
         return 1
       fi
       sync
-      ok "  [$side] SUCCESS — flashed, rebooting."
+      ok "  [$side] flashed — rebooting."
       return 0
-    }
-
-    # Flash one half sequentially, showing side-specific bootloader instructions.
-    # $1 = boot label, $2 = side (LEFT|RIGHT), $3 = display name,
-    # $4 = combo text, $5 = firmware path.
-    flash_side() {
-      local label="$1" side="$2" display="$3" combo="$4" fw="$5"
-
-      if ! find_dev "$label" >/dev/null 2>&1; then
-        if [ "$side" = "LEFT" ]; then
-          if ! is_left_plugged_in; then
-            step "Plug in the $display half via USB."
-            while ! is_left_plugged_in; do sleep 0.5; done
-          fi
-        else
-          if ! is_right_plugged_in; then
-            step "Plug in the $display half via USB."
-            while ! is_right_plugged_in; do sleep 0.5; done
-          fi
-        fi
-        ok "  $display keyboard detected."
-        info ""
-        info "Hold ''${bold}$combo''${rst} to enter bootloader."
-        info ""
-        while ! find_dev "$label" >/dev/null 2>&1; do sleep 0.5; done
-      else
-        ok "  $display keyboard detected."
-        info ""
-      fi
-
-      while ! flash_half "$label" "$side" "$fw"; do sleep 0.5; done
     }
 
     # ------------------------------------------------------------- commands --
@@ -167,23 +125,70 @@ writeShellApplication {
       local fw
       fw=$(resolve_firmware "''${1:-}") || return 1
 
-      info "''${bold}Glove80 Firmware Flash''${rst}"
       info "''${dim}firmware: $fw''${rst}"
       info ""
 
       if ! is_plugged_in; then
         step "Plug in one or both halves via USB."
         while ! is_plugged_in; do sleep 0.5; done
+        ok "Keyboard detected."
         info ""
       fi
 
-      flash_side GLV80LHBOOT LEFT "Left" \
-        "Magic key (bottom-left) + the E key" "$fw"
-      info ""
-      flash_side GLV80RHBOOT RIGHT "Right" \
-        "PgDn key (bottom-right) + the I key" "$fw"
+      local lh=0 rh=0 prompted=0
+      find_dev GLV80LHBOOT >/dev/null 2>&1 && lh=2
+      find_dev GLV80RHBOOT >/dev/null 2>&1 && rh=2
+
+      if [ "$lh" = 2 ] && [ "$rh" = 2 ]; then
+        step "Both halves in bootloader. Flashing…"
+      elif [ "$lh" = 2 ]; then
+        step "LEFT half in bootloader — flashing it now."
+        info "  Put the RIGHT half into bootloader when ready:"
+        info "    ''${bold}Power-up (recommended):''${rst} power off → hold ''${bold}I + PgDn''${rst} → power on"
+        info "    ''${bold}ZMK shortcut (quicker):''${rst}  ''${bold}Magic + ''${apos}''${rst}"
+        info "  Slow-pulsing red LED = bootloader ready."
+      elif [ "$rh" = 2 ]; then
+        step "RIGHT half in bootloader — flashing it now."
+        info "  Put the LEFT half into bootloader when ready:"
+        info "    ''${bold}Power-up (recommended):''${rst} power off → hold ''${bold}Magic + E''${rst} → power on"
+        info "    ''${bold}ZMK shortcut (quicker):''${rst}  ''${bold}Magic + Esc''${rst}"
+        info "  Slow-pulsing red LED = bootloader ready."
+      else
+        step "Put the plugged-in half into bootloader mode."
+        info "    ''${bold}Power-up (recommended)''${rst} — power off, then hold while powering on:"
+        info "      Left:  ''${bold}Magic + E''${rst}    Right: ''${bold}I + PgDn''${rst}"
+        info "    ''${bold}ZMK shortcut (quicker)''${rst}:"
+        info "      Left:  ''${bold}Magic + Esc''${rst}  Right: ''${bold}Magic + ''${apos}''${rst}"
+        info "  Slow-pulsing red LED = bootloader ready.  ''${dim}Ctrl-C to abort.''${rst}"
+      fi
       info ""
 
+      lh=0
+      rh=0
+      while [ "$lh" = 0 ] || [ "$rh" = 0 ]; do
+        if [ "$lh" = 0 ] && flash_half GLV80LHBOOT LEFT "$fw"; then lh=1; fi
+        if [ "$rh" = 0 ] && flash_half GLV80RHBOOT RIGHT "$fw"; then rh=1; fi
+
+        if [ "$lh" = 1 ] && [ "$rh" = 0 ] && [ "$prompted" != "r" ]; then
+          info ""
+          step "LEFT flashed. Plug in the RIGHT half (or swap cable) and enter bootloader:"
+          info "    ''${bold}Power-up (recommended):''${rst} power off → hold ''${bold}I + PgDn''${rst} → power on"
+          info "    ''${bold}ZMK shortcut (quicker):''${rst}  ''${bold}Magic + ''${apos}''${rst}"
+          info "  Slow-pulsing red LED = bootloader ready."
+          prompted=r
+        elif [ "$rh" = 1 ] && [ "$lh" = 0 ] && [ "$prompted" != "l" ]; then
+          info ""
+          step "RIGHT flashed. Plug in the LEFT half (or swap cable) and enter bootloader:"
+          info "    ''${bold}Power-up (recommended):''${rst} power off → hold ''${bold}Magic + E''${rst} → power on"
+          info "    ''${bold}ZMK shortcut (quicker):''${rst}  ''${bold}Magic + Esc''${rst}"
+          info "  Slow-pulsing red LED = bootloader ready."
+          prompted=l
+        fi
+
+        if [ "$lh" = 0 ] || [ "$rh" = 0 ]; then sleep 0.5; fi
+      done
+
+      info ""
       ok "Done. Both halves flashed."
     }
 
@@ -211,14 +216,16 @@ writeShellApplication {
       3. built-in default           baked in at build time
 
     ''${bold}Flashing''${rst}:
-      Run ''${bold}glove80 flash''${rst}, plug in each half via USB, then put it into
-      bootloader using the key combo for that half:
+      Run ''${bold}glove80 flash''${rst}, then plug in each half via USB and enter bootloader
+      mode (look for a slow-pulsing red LED next to the power switch):
 
-        LEFT  half: hold ''${bold}Magic key (bottom-left)''${rst} + the ''${bold}E key''${rst}
-        RIGHT half: hold ''${bold}PgDn key (bottom-right)''${rst} + the ''${bold}I key''${rst}
+        Power-up method (recommended — power off, hold keys, then power on):
+          Left:  Magic + E      Right: I + PgDn
+        ZMK method (quicker, less reliable):
+          Left:  Magic + Esc    Right: Magic + ''${apos}
 
-      Each half is detected, mounted, flashed, and reboots itself.
-      One cable is fine — do the halves one at a time. Ctrl-C to abort.
+      Each half is detected, mounted, flashed, and reboots. One cable is fine;
+      do halves one at a time, or both at once with two cables. Ctrl-C to abort.
     EOF
     }
 
