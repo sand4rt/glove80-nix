@@ -17,7 +17,7 @@ sensible defaults. The full set of options (shown with their defaults) is:
   # inputs.glove80.inputs.nixpkgs.follows = "nixpkgs"; # optional
 
   # In your Home Manager configuration:
-  imports = [ inputs.glove80.homeManagerModules.default ];
+  imports = [ inputs.glove80-nix.homeManagerModules.default ];
 
   programs.glove80 = {
     enable = true;
